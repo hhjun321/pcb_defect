@@ -2,7 +2,7 @@
 
 > **목적**: 실험군 5종(Baseline / Random CP / Brightness CP / Context CP / **Brightness+Spec CP**)을
 > 동일 조건으로 학습하고 `test`에서 평가해 **RQ4**에 답한다.
-> 입력 `datasets/*` → 출력 `runs/{ds}_s{seed}`.
+> 입력 `datasets/*`(로컬) → 출력 `runs/{ds}_s{seed}` → **Drive `runs/`로 복사**.
 > **실행 환경**: **GPU** (T4 이상). 런타임 → 런타임 유형 변경 → GPU.
 > **전제**: step4 완료 — `verify_datasets.py`가 `ALL CHECKS PASSED`를 출력했을 것.
 > ⚠️ **STEP 1(`data.yaml` 재작성)을 반드시 먼저 실행**한다. `path`에 Windows 절대경로가 들어 있어
@@ -44,7 +44,7 @@ else:
 !ls {REPO}/src | head
 ```
 
-> **코드 = 리포(`/content/pcb_defect`) · 데이터/산출물 = Drive(`/content/drive/MyDrive/pcb_defect`)**.
+> **루트 3개**: `REPO`(코드) / `WORK`(작업 데이터, 세션 로컬) / `DRIVE`(zip 원본 + outputs 영구 보관).
 > 세션 재시작마다 클론 셀을 다시 돌린다(세션 로컬 디스크는 휘발). 코드를 Drive에 복사하지 않는다 —
 > 버전이 갈라진다.
 
@@ -52,10 +52,12 @@ else:
 import os, json, glob
 
 # ===== 공통 환경 (pcb-mh 전 문서 동일 — 수정 금지) =====
-os.environ['REPO']     = '/content/pcb_defect'                 # 코드(형상) — git clone 대상, 세션 로컬
-os.environ['DRIVE']    = '/content/drive/MyDrive/pcb_defect'   # 데이터·산출물 루트 (업로드 경로에 맞게 여기만 수정)
-os.environ['PCB_ROOT'] = os.environ['DRIVE']                   # src/*.py가 읽는 유일한 데이터 루트
-os.environ['PCB_SRC']  = f"{os.environ['REPO']}/src"           # 코드는 REPO에서 읽는다 (Drive 아님)
+os.environ['REPO']     = '/content/pcb_defect'                          # 코드(형상) — git clone, 세션 로컬
+os.environ['DRIVE']    = '/content/drive/MyDrive/pcb_defect'            # 영구 보관(outputs·백업)
+os.environ['PCB_ZIP']  = '/content/drive/MyDrive/data/PCB/archive.zip'  # 원본 데이터 zip (Drive)
+os.environ['WORK']     = '/content/pcb_work'                            # 작업 루트 — 세션 로컬 디스크
+os.environ['PCB_ROOT'] = os.environ['WORK']                             # src/*.py가 읽는 유일한 데이터 루트
+os.environ['PCB_SRC']  = f"{os.environ['REPO']}/src"                    # 코드는 REPO에서 (Drive 아님)
 os.environ['PCB_RAW']  = f"{os.environ['PCB_ROOT']}/pcb-defect-dataset"
 os.environ['PCB_FIX']  = f"{os.environ['PCB_ROOT']}/pcb-defect-dataset-fixed"
 os.environ['PCB_DS']   = f"{os.environ['PCB_ROOT']}/datasets"
@@ -73,11 +75,76 @@ ARMS   = ["random", "brightness", "context", "brightspec"]
 def arms_of(split):
     return [split] + [f"{split}_{a}cp" for a in ARMS]
 
+os.makedirs(os.environ['PCB_ROOT'], exist_ok=True)   # WORK는 세션마다 새로 만든다
 os.chdir(os.environ['PCB_ROOT'])
 os.makedirs(os.environ['PCB_RUNS'], exist_ok=True)
 print("PCB_ROOT =", os.environ['PCB_ROOT'])
 print("PCB_SRC  =", os.environ['PCB_SRC'])
 ```
+
+```python
+# ===== 0-C. 작업 루트 준비 + 원본 압축해제 (전 문서 동일) =====
+import os, glob, time, subprocess
+
+W, DR, Z = os.environ['WORK'], os.environ['DRIVE'], os.environ['PCB_ZIP']
+os.makedirs(W, exist_ok=True)
+os.makedirs(f"{DR}/outputs", exist_ok=True)
+
+# outputs는 Drive에 영구 보관 — WORK/outputs를 Drive로 심볼릭 링크
+lnk = f"{W}/outputs"
+if os.path.islink(lnk):
+    pass
+elif os.path.isdir(lnk):
+    raise SystemExit(f"{lnk}가 실제 디렉터리다. 내용을 {DR}/outputs로 옮기고 지운 뒤 다시 실행하라.")
+else:
+    os.symlink(f"{DR}/outputs", lnk)
+
+# 원본 데이터: 세션 로컬에 없으면 zip에서 복원 (-n = 기존 파일 보존)
+assert os.path.exists(Z), f"zip 없음: {Z}"
+if not os.path.isdir(f"{os.environ['PCB_RAW']}/train/images"):
+    t = time.time()
+    subprocess.run(['unzip', '-q', '-n', Z, '-d', W], check=True)
+    print("unzip %.1f분" % ((time.time() - t) / 60))
+
+print("raw images :", len(glob.glob(f"{os.environ['PCB_RAW']}/*/images/*.jpg")))   # 10668
+print("outputs    ->", os.path.realpath(lnk))
+print("datasets   :", sorted(os.listdir(os.environ['PCB_DS'])) if os.path.isdir(os.environ['PCB_DS']) else "(없음)")
+!df -h /content | tail -1
+```
+
+> `unzip -n`이라 이미 풀린 세션에서는 즉시 통과한다. 첫 실행은 21,337파일 / 1.19GB — **2~4분**.
+> 작업 루트를 로컬(`/content`)에 두는 이유: Drive(FUSE)는 **하드링크를 지원하지 않아**
+> `build_datasets.py`·`phase4_copypaste.py`가 전부 실복사로 떨어진다(데이터셋 10종 ≈ 2.2GB → Drive 압박).
+> 로컬은 하드링크가 동작해 `val`/`test`가 추가 용량 없이 공유된다.
+
+```python
+# ===== 0-D. 세션 재시작 복원 — datasets 없으면 재생성 =====
+# split 결정은 결정적(정렬 + board별 box 수 greedy)이라 재실행해도 동일 구성이 나온다.
+if not os.path.isdir(D('mh_board') + '/train/images'):
+    print("datasets 없음 → build_datasets.py 재실행")
+    !python $PCB_SRC/build_datasets.py | tail -25
+else:
+    print("datasets OK:", sorted(os.listdir(os.environ['PCB_DS'])))
+```
+
+```python
+# ===== 0-E. 증강 arm 복원 (exp_yolo 전용) =====
+# step4를 다른 세션에서 돌렸다면 datasets/*cp가 로컬에 없다. Drive tar 백업에서 되살린다.
+import os, subprocess, time
+need = [a for sp in SPLITS for a in arms_of(sp)]                    # 10종
+miss = [d for d in need if not os.path.isdir(D(d) + '/train/images')]
+if miss:
+    tar = f"{os.environ['DRIVE']}/backup/datasets.tar"
+    assert os.path.exists(tar), f"백업 없음: {tar} — step4를 재실행해야 한다 (누락: {miss})"
+    t = time.time()
+    subprocess.run(['tar', '-C', os.environ['PCB_ROOT'], '-xf', tar], check=True)
+    print("restored %d종  %.1f분" % (len(miss), (time.time() - t) / 60))
+print("datasets:", sorted(os.listdir(os.environ['PCB_DS'])))
+assert not [d for d in need if not os.path.isdir(D(d) + '/train/images')], "여전히 누락"
+```
+
+> 복원 후에도 **STEP 1(`data.yaml` 재작성)은 반드시 실행**한다. tar 안의 `data.yaml`은
+> 백업 당시 루트(`path:`)를 그대로 담고 있다.
 
 ```python
 !nvidia-smi
@@ -135,23 +202,15 @@ mh_orig_brightspeccp          1477    165    190     5319
 
 한 값이라도 어긋나면 step4로 돌아간다.
 
-### 2-1. (권장) Drive I/O 회피 — 로컬 복사
+### 2-1. 데이터 위치 확인
 
-Drive에서 직접 학습하면 I/O 병목이 크다. 로컬 디스크로 복사한 뒤 학습하고 결과만 Drive에 남긴다.
+작업 루트가 이미 세션 로컬 디스크(`/content/pcb_work`)라 **Drive 복사 단계는 불필요**하다.
+학습 입력은 `PCB_DS`를 그대로 쓴다.
 
 ```python
-LOCAL = '/content/pcb_ds'
-!mkdir -p $LOCAL
-for split in SPLITS:
-    for d in arms_of(split):
-        if not os.path.exists(f"{LOCAL}/{d}"):
-            !cp -r "{D(d)}" "{LOCAL}/"
-            # 복사본의 data.yaml path 갱신
-            with open(f"{LOCAL}/{d}/data.yaml", 'w') as f:
-                f.write(f"path: {LOCAL}/{d}\ntrain: train/images\nval: val/images\ntest: test/images\n\n")
-                f.write("nc: 1\nnames:\n  0: missing_hole\n")
-print(sorted(os.listdir(LOCAL)))
-DSBASE = LOCAL          # 아래 학습에서 사용. Drive 직접 학습이면 DSBASE = os.environ['PCB_DS']
+DSBASE = os.environ['PCB_DS']          # /content/pcb_work/datasets — 로컬 디스크
+print(DSBASE, '->', sorted(os.listdir(DSBASE)))
+!df -h /content | tail -1
 ```
 
 ---
@@ -164,7 +223,9 @@ EPOCHS   = 100
 IMGSZ    = 640
 BATCH    = 16
 PATIENCE = 30
-RUNDIR   = os.environ['PCB_RUNS']      # Drive — 세션이 끊겨도 결과 유지
+RUNDIR   = os.environ['PCB_RUNS']                  # 로컬 — 학습 중 I/O (에폭마다 쓰기)
+DRUNS    = f"{os.environ['DRIVE']}/runs"           # Drive — arm 완료 시 복사, 세션 끊겨도 유지
+os.makedirs(RUNDIR, exist_ok=True); os.makedirs(DRUNS, exist_ok=True)
 ```
 
 | 항목 | 값 | 비고 |
@@ -200,10 +261,20 @@ def train_one(ds, seed=0):
                precision=float(m.box.mp), recall=float(m.box.mr))
     res['f1'] = 2*res['precision']*res['recall'] / max(res['precision']+res['recall'], 1e-9)
     json.dump(res, open(f'{RUNDIR}/{name}_test.json', 'w'), indent=2)
+
+    # arm 완료 → Drive로 복사 (세션이 끊겨도 결과·재개 판정이 살아남는다)
+    import subprocess
+    for sub in (name, f'{name}_test'):
+        subprocess.run(['cp', '-r', f'{RUNDIR}/{sub}', f'{DRUNS}/'], check=True)
+    subprocess.run(['cp', f'{RUNDIR}/{name}_test.json', f'{DRUNS}/'], check=True)
+
     print(res)
     del model; gc.collect(); torch.cuda.empty_cache()
     return res
 ```
+
+> 학습 중 쓰기는 **로컬**에서 한다. YOLO는 에폭마다 `results.csv`·체크포인트를 갱신하는데
+> Drive(FUSE)에 직접 쓰면 느리고 세션 중 끊김에 취약하다. arm 1개가 끝날 때만 통째로 복사한다.
 
 ---
 
@@ -212,7 +283,7 @@ def train_one(ds, seed=0):
 ```python
 results = []
 for ds in arms_of('mh_board'):
-    if os.path.exists(f"{RUNDIR}/{ds}_s0_test.json"):
+    if os.path.exists(f"{DRUNS}/{ds}_s0_test.json"):
         print(f"↷ skip {ds} — 이미 완료"); continue
     print(f"\n===== {ds} =====")
     results.append(train_one(ds, seed=0))
@@ -226,7 +297,8 @@ for ds in arms_of('mh_board'):
 | `mh_orig` (1477장) | 약 50–70분 | 약 5–6시간 |
 
 Colab 세션 제한을 고려해 **한 번에 2–3개씩 나눠 실행**한다.
-`RUNDIR`이 Drive이고 완료분은 `↷ skip`으로 건너뛰므로, 세션이 끊겨도 이어서 돌리면 된다.
+완료분은 Drive(`DRUNS`)의 `*_test.json`으로 판정해 `↷ skip`하므로, 세션이 끊겨도 이어서 돌리면 된다.
+새 세션에서는 STEP 0(0-A~0-E)을 다시 돌려 데이터를 복원한 뒤 같은 셀을 실행한다.
 
 ---
 
@@ -234,7 +306,7 @@ Colab 세션 제한을 고려해 **한 번에 2–3개씩 나눠 실행**한다.
 
 ```python
 for ds in arms_of('mh_orig'):
-    if os.path.exists(f"{RUNDIR}/{ds}_s0_test.json"):
+    if os.path.exists(f"{DRUNS}/{ds}_s0_test.json"):
         print(f"↷ skip {ds}"); continue
     print(f"\n===== {ds} =====")
     results.append(train_one(ds, seed=0))
@@ -249,7 +321,7 @@ for ds in arms_of('mh_orig'):
 ```python
 for seed in [1, 2]:
     for ds in arms_of('mh_board'):
-        if os.path.exists(f"{RUNDIR}/{ds}_s{seed}_test.json"):
+        if os.path.exists(f"{DRUNS}/{ds}_s{seed}_test.json"):
             continue
         results.append(train_one(ds, seed=seed))
 ```
@@ -261,7 +333,7 @@ for seed in [1, 2]:
 ```python
 import pandas as pd
 
-rows = [json.load(open(p)) for p in sorted(glob.glob(f'{RUNDIR}/*_test.json'))]
+rows = [json.load(open(p)) for p in sorted(glob.glob(f'{DRUNS}/*_test.json'))]
 df = pd.DataFrame(rows)
 
 ARM_NAME = {'': 'Baseline', 'randomcp': 'Random CP', 'brightnesscp': 'Brightness CP',
@@ -274,8 +346,8 @@ df['arm']   = df['dataset'].map(
 agg = (df.groupby(['split', 'arm'])[['mAP50', 'mAP50_95', 'precision', 'recall', 'f1']]
          .agg(['mean', 'std']).round(4).reindex(order, level='arm'))
 display(agg)
-agg.to_csv(f'{RUNDIR}/summary.csv')
-print('saved', f'{RUNDIR}/summary.csv')
+agg.to_csv(f'{DRUNS}/summary.csv')
+print('saved', f'{DRUNS}/summary.csv')
 ```
 
 ### 8-1. Baseline 대비 개선폭
@@ -325,8 +397,9 @@ Brightness+Spec CP     ...      ...                   ...      ...
 | `Dataset ... not found` | STEP 1 미실행. `data.yaml`의 `path`가 Windows 경로로 남아 있다 |
 | 라벨이 전부 무시되고 background로 학습 | 이미지/라벨 stem 불일치. step4 STEP 4(`verify_datasets.py`)로 `unpaired=0` 확인 |
 | `CUDA out of memory` | `BATCH`를 8 또는 4로. **전 arm에 동일 적용**해야 비교가 유지된다 |
-| 학습이 비정상적으로 느림 | Drive I/O 병목. STEP 2-1의 로컬 복사를 수행한다 |
-| 세션 끊김 | `RUNDIR`이 Drive다. 동일 셀 재실행 시 완료분은 `↷ skip`된다 |
+| 학습이 비정상적으로 느림 | `DSBASE`가 Drive를 가리키는지 확인. 로컬(`/content/pcb_work/datasets`)이어야 한다 |
+| 세션 끊김 | 완료 arm은 Drive `runs/`에 복사돼 있다. STEP 0 복원 후 동일 셀 재실행 → 완료분 `↷ skip` |
+| 학습 중 세션이 죽음 | 그 arm은 처음부터 다시 돌린다(로컬 `runs/`는 휘발). arm을 2–3개씩 나눠 실행할 것 |
 | arm 간 결과 차이가 거의 없음 | STEP 7로 시드를 3개로 늘린다. 그래도 없으면 없는 대로 보고한다 |
 
 ---
@@ -335,10 +408,10 @@ Brightness+Spec CP     ...      ...                   ...      ...
 
 - [ ] STEP 1 `data.yaml` 10개 재작성
 - [ ] STEP 2 데이터셋 점검 — box 수가 문서 값과 일치
-- [ ] `mh_board` 5개 arm 학습 완료 (`runs/*_test.json` 5개)
+- [ ] `mh_board` 5개 arm 학습 완료 (Drive `runs/*_test.json` 5개)
 - [ ] `mh_orig` 5개 arm 학습 완료
 - [ ] 시드 3개 반복 (권장)
-- [ ] `runs/summary.csv` 생성, Baseline 대비 개선폭 산출
+- [ ] Drive `runs/summary.csv` 생성, Baseline 대비 개선폭 산출
 
 완료 시 → `보고서(simple).md` §5 평가 계획의 결과란을 채우고, RQ4를 확정한다.
 

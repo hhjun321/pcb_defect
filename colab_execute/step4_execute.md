@@ -32,7 +32,7 @@ else:
 !ls {REPO}/src | head
 ```
 
-> **코드 = 리포(`/content/pcb_defect`) · 데이터/산출물 = Drive(`/content/drive/MyDrive/pcb_defect`)**.
+> **루트 3개**: `REPO`(코드) / `WORK`(작업 데이터, 세션 로컬) / `DRIVE`(zip 원본 + outputs 영구 보관).
 > 세션 재시작마다 클론 셀을 다시 돌린다(세션 로컬 디스크는 휘발). 코드를 Drive에 복사하지 않는다 —
 > 버전이 갈라진다.
 
@@ -40,10 +40,12 @@ else:
 import os, json, glob
 
 # ===== 공통 환경 (pcb-mh 전 문서 동일 — 수정 금지) =====
-os.environ['REPO']     = '/content/pcb_defect'                 # 코드(형상) — git clone 대상, 세션 로컬
-os.environ['DRIVE']    = '/content/drive/MyDrive/pcb_defect'   # 데이터·산출물 루트 (업로드 경로에 맞게 여기만 수정)
-os.environ['PCB_ROOT'] = os.environ['DRIVE']                   # src/*.py가 읽는 유일한 데이터 루트
-os.environ['PCB_SRC']  = f"{os.environ['REPO']}/src"           # 코드는 REPO에서 읽는다 (Drive 아님)
+os.environ['REPO']     = '/content/pcb_defect'                          # 코드(형상) — git clone, 세션 로컬
+os.environ['DRIVE']    = '/content/drive/MyDrive/pcb_defect'            # 영구 보관(outputs·백업)
+os.environ['PCB_ZIP']  = '/content/drive/MyDrive/data/PCB/archive.zip'  # 원본 데이터 zip (Drive)
+os.environ['WORK']     = '/content/pcb_work'                            # 작업 루트 — 세션 로컬 디스크
+os.environ['PCB_ROOT'] = os.environ['WORK']                             # src/*.py가 읽는 유일한 데이터 루트
+os.environ['PCB_SRC']  = f"{os.environ['REPO']}/src"                    # 코드는 REPO에서 (Drive 아님)
 os.environ['PCB_RAW']  = f"{os.environ['PCB_ROOT']}/pcb-defect-dataset"
 os.environ['PCB_FIX']  = f"{os.environ['PCB_ROOT']}/pcb-defect-dataset-fixed"
 os.environ['PCB_DS']   = f"{os.environ['PCB_ROOT']}/datasets"
@@ -61,9 +63,55 @@ ARMS   = ["random", "brightness", "context", "brightspec"]
 def arms_of(split):
     return [split] + [f"{split}_{a}cp" for a in ARMS]
 
+os.makedirs(os.environ['PCB_ROOT'], exist_ok=True)   # WORK는 세션마다 새로 만든다
 os.chdir(os.environ['PCB_ROOT'])
 print("PCB_ROOT =", os.environ['PCB_ROOT'])
 print("PCB_SRC  =", os.environ['PCB_SRC'])
+```
+
+```python
+# ===== 0-C. 작업 루트 준비 + 원본 압축해제 (전 문서 동일) =====
+import os, glob, time, subprocess
+
+W, DR, Z = os.environ['WORK'], os.environ['DRIVE'], os.environ['PCB_ZIP']
+os.makedirs(W, exist_ok=True)
+os.makedirs(f"{DR}/outputs", exist_ok=True)
+
+# outputs는 Drive에 영구 보관 — WORK/outputs를 Drive로 심볼릭 링크
+lnk = f"{W}/outputs"
+if os.path.islink(lnk):
+    pass
+elif os.path.isdir(lnk):
+    raise SystemExit(f"{lnk}가 실제 디렉터리다. 내용을 {DR}/outputs로 옮기고 지운 뒤 다시 실행하라.")
+else:
+    os.symlink(f"{DR}/outputs", lnk)
+
+# 원본 데이터: 세션 로컬에 없으면 zip에서 복원 (-n = 기존 파일 보존)
+assert os.path.exists(Z), f"zip 없음: {Z}"
+if not os.path.isdir(f"{os.environ['PCB_RAW']}/train/images"):
+    t = time.time()
+    subprocess.run(['unzip', '-q', '-n', Z, '-d', W], check=True)
+    print("unzip %.1f분" % ((time.time() - t) / 60))
+
+print("raw images :", len(glob.glob(f"{os.environ['PCB_RAW']}/*/images/*.jpg")))   # 10668
+print("outputs    ->", os.path.realpath(lnk))
+print("datasets   :", sorted(os.listdir(os.environ['PCB_DS'])) if os.path.isdir(os.environ['PCB_DS']) else "(없음)")
+!df -h /content | tail -1
+```
+
+> `unzip -n`이라 이미 풀린 세션에서는 즉시 통과한다. 첫 실행은 21,337파일 / 1.19GB — **2~4분**.
+> 작업 루트를 로컬(`/content`)에 두는 이유: Drive(FUSE)는 **하드링크를 지원하지 않아**
+> `build_datasets.py`·`phase4_copypaste.py`가 전부 실복사로 떨어진다(데이터셋 10종 ≈ 2.2GB → Drive 압박).
+> 로컬은 하드링크가 동작해 `val`/`test`가 추가 용량 없이 공유된다.
+
+```python
+# ===== 0-D. 세션 재시작 복원 — datasets 없으면 재생성 =====
+# split 결정은 결정적(정렬 + board별 box 수 greedy)이라 재실행해도 동일 구성이 나온다.
+if not os.path.isdir(D('mh_board') + '/train/images'):
+    print("datasets 없음 → build_datasets.py 재실행")
+    !python $PCB_SRC/build_datasets.py | tail -25
+else:
+    print("datasets OK:", sorted(os.listdir(os.environ['PCB_DS'])))
 ```
 
 전제 확인:
@@ -290,6 +338,29 @@ ALL CHECKS PASSED
 | `outputs/phase4/qc_{ds}.png` | 합성 결과 육안 QC |
 | `outputs/phase4/qc_profile_{ds}.png` | radial profile 대조 그림 |
 | `outputs/phase4/synthesis_summary.json` | 전 arm 메타 집계 |
+
+---
+
+## 백업 — `datasets/`를 Drive로 (세션 보존)
+
+작업 루트는 세션 로컬이라 런타임이 끊기면 `datasets/`가 사라진다. step4 재실행은 수십 분,
+tar 복사는 수 분이다. **exp_yolo를 다른 세션에서 돌릴 계획이면 여기서 백업한다.**
+
+```python
+import os, subprocess, time
+BK = f"{os.environ['DRIVE']}/backup"
+os.makedirs(BK, exist_ok=True)
+tar = f"{BK}/datasets.tar"
+
+t = time.time()
+subprocess.run(['tar', '-C', os.environ['PCB_ROOT'], '-cf', tar, 'datasets'], check=True)
+print("saved %s  %.2f GB  %.1f분" % (tar, os.path.getsize(tar) / 1e9, (time.time() - t) / 60))
+```
+
+- `datasets/` 전체를 **tar 1개**로 묶는다. 데이터셋 10종이 `val`/`test`를 하드링크로 공유하므로
+  tar가 링크 항목으로 저장해 중복이 제거된다(개별 tar 10개 ≈ 2.2GB → 통합 tar ≈ 1.4GB).
+- 압축하지 않는다. 내용이 JPEG라 gzip 이득이 없고 시간만 든다.
+- 복원은 exp_yolo STEP 0-E에서 자동으로 한다.
 
 ---
 

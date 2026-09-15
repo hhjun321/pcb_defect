@@ -52,7 +52,7 @@ else:
 !ls {REPO}/src | head
 ```
 
-> **코드 = 리포(`/content/pcb_defect`) · 데이터/산출물 = Drive(`/content/drive/MyDrive/pcb_defect`)**.
+> **루트 3개**: `REPO`(코드) / `WORK`(작업 데이터, 세션 로컬) / `DRIVE`(zip 원본 + outputs 영구 보관).
 > 세션 재시작마다 클론 셀을 다시 돌린다(세션 로컬 디스크는 휘발). 코드를 Drive에 복사하지 않는다 —
 > 버전이 갈라진다.
 
@@ -60,10 +60,12 @@ else:
 import os, json, glob
 
 # ===== 공통 환경 (pcb-mh 전 문서 동일 — 수정 금지) =====
-os.environ['REPO']     = '/content/pcb_defect'                 # 코드(형상) — git clone 대상, 세션 로컬
-os.environ['DRIVE']    = '/content/drive/MyDrive/pcb_defect'   # 데이터·산출물 루트 (업로드 경로에 맞게 여기만 수정)
-os.environ['PCB_ROOT'] = os.environ['DRIVE']                   # src/*.py가 읽는 유일한 데이터 루트
-os.environ['PCB_SRC']  = f"{os.environ['REPO']}/src"           # 코드는 REPO에서 읽는다 (Drive 아님)
+os.environ['REPO']     = '/content/pcb_defect'                          # 코드(형상) — git clone, 세션 로컬
+os.environ['DRIVE']    = '/content/drive/MyDrive/pcb_defect'            # 영구 보관(outputs·백업)
+os.environ['PCB_ZIP']  = '/content/drive/MyDrive/data/PCB/archive.zip'  # 원본 데이터 zip (Drive)
+os.environ['WORK']     = '/content/pcb_work'                            # 작업 루트 — 세션 로컬 디스크
+os.environ['PCB_ROOT'] = os.environ['WORK']                             # src/*.py가 읽는 유일한 데이터 루트
+os.environ['PCB_SRC']  = f"{os.environ['REPO']}/src"                    # 코드는 REPO에서 (Drive 아님)
 os.environ['PCB_RAW']  = f"{os.environ['PCB_ROOT']}/pcb-defect-dataset"
 os.environ['PCB_FIX']  = f"{os.environ['PCB_ROOT']}/pcb-defect-dataset-fixed"
 os.environ['PCB_DS']   = f"{os.environ['PCB_ROOT']}/datasets"
@@ -81,23 +83,71 @@ ARMS   = ["random", "brightness", "context", "brightspec"]   # brightspec = 제�
 def arms_of(split):                       # baseline 포함 5종
     return [split] + [f"{split}_{a}cp" for a in ARMS]
 
+os.makedirs(os.environ['PCB_ROOT'], exist_ok=True)   # WORK는 세션마다 새로 만든다
 os.chdir(os.environ['PCB_ROOT'])
 print("PCB_ROOT =", os.environ['PCB_ROOT'])
 print("PCB_SRC  =", os.environ['PCB_SRC'])
 print("datasets  =", sorted(os.listdir(os.environ['PCB_DS'])) if os.path.isdir(os.environ['PCB_DS']) else "(없음)")
 ```
 
+```python
+# ===== 0-C. 작업 루트 준비 + 원본 압축해제 (전 문서 동일) =====
+import os, glob, time, subprocess
+
+W, DR, Z = os.environ['WORK'], os.environ['DRIVE'], os.environ['PCB_ZIP']
+os.makedirs(W, exist_ok=True)
+os.makedirs(f"{DR}/outputs", exist_ok=True)
+
+# outputs는 Drive에 영구 보관 — WORK/outputs를 Drive로 심볼릭 링크
+lnk = f"{W}/outputs"
+if os.path.islink(lnk):
+    pass
+elif os.path.isdir(lnk):
+    raise SystemExit(f"{lnk}가 실제 디렉터리다. 내용을 {DR}/outputs로 옮기고 지운 뒤 다시 실행하라.")
+else:
+    os.symlink(f"{DR}/outputs", lnk)
+
+# 원본 데이터: 세션 로컬에 없으면 zip에서 복원 (-n = 기존 파일 보존)
+assert os.path.exists(Z), f"zip 없음: {Z}"
+if not os.path.isdir(f"{os.environ['PCB_RAW']}/train/images"):
+    t = time.time()
+    subprocess.run(['unzip', '-q', '-n', Z, '-d', W], check=True)
+    print("unzip %.1f분" % ((time.time() - t) / 60))
+
+print("raw images :", len(glob.glob(f"{os.environ['PCB_RAW']}/*/images/*.jpg")))   # 10668
+print("outputs    ->", os.path.realpath(lnk))
+print("datasets   :", sorted(os.listdir(os.environ['PCB_DS'])) if os.path.isdir(os.environ['PCB_DS']) else "(없음)")
+!df -h /content | tail -1
+```
+
+> `unzip -n`이라 이미 풀린 세션에서는 즉시 통과한다. 첫 실행은 21,337파일 / 1.19GB — **2~4분**.
+> 작업 루트를 로컬(`/content`)에 두는 이유: Drive(FUSE)는 **하드링크를 지원하지 않아**
+> `build_datasets.py`·`phase4_copypaste.py`가 전부 실복사로 떨어진다(데이터셋 10종 ≈ 2.2GB → Drive 압박).
+> 로컬은 하드링크가 동작해 `val`/`test`가 추가 용량 없이 공유된다.
+
 > `src/*.py`는 전부 `PCB_ROOT = os.environ.get("PCB_ROOT", r"D:/project/pcb_defect")`로 루트를 읽는다.
 > **환경변수만 설정하면 스크립트 수정이 불필요하다.** 소스 문자열을 sed로 치환하지 말 것.
 >
-> **루트 2분할 규약 (Colab 정본)**
-> - `REPO = /content/pcb_defect` — 코드·형상. `git clone https://github.com/hhjun321/pcb_defect.git`.
->   세션 로컬이라 재시작마다 다시 클론/`git pull`. **Drive에 복사 금지**(버전 분기).
-> - `DRIVE = PCB_ROOT = /content/drive/MyDrive/pcb_defect` — 데이터(`pcb-defect-dataset*`),
->   `datasets/`, `outputs/`, `runs/`. 실행 산출물은 전부 여기 남는다.
-> - `PCB_SRC = $REPO/src`. 스크립트는 리포에서 실행되고 데이터는 Drive에서 읽/쓴다.
-> - 리포에 동봉된 소형 산출물(`outputs/phase3/labels_manual.json`)은 step3에서 Drive `outputs/phase3/`로
+> **루트 3분할 규약 (Colab 정본)**
+>
+> | 루트 | 경로 | 내용 | 수명 |
+> |---|---|---|---|
+> | `REPO` | `/content/pcb_defect` | 코드·형상 (`src/`, `colab_execute/`, 캘리브레이션 JSON) | 세션 로컬 — 매 세션 클론 |
+> | `WORK` = `PCB_ROOT` | `/content/pcb_work` | `pcb-defect-dataset{,-fixed}/`, `datasets/`, `runs/` | 세션 로컬 — zip에서 복원 |
+> | `DRIVE` | `/content/drive/MyDrive/pcb_defect` | `outputs/`(심볼릭 링크 대상), 데이터셋 백업 tar | 영구 |
+> | `PCB_ZIP` | `/content/drive/MyDrive/data/PCB/archive.zip` | 원본 데이터 1.19GB / 21,337파일 | 영구 (읽기 전용) |
+>
+> - `PCB_SRC = $REPO/src`. 스크립트는 리포에서 실행되고 데이터는 `WORK`에서 읽/쓴다.
+> - **작업 루트를 Drive에 두지 않는 이유**: Drive(FUSE)는 하드링크 미지원 →
+>   `build_datasets.py`·`phase4_copypaste.py`의 `os.link`가 `shutil.copy2`로 폴백해
+>   데이터셋 10종이 전부 실복사(≈2.2GB)가 되고, 21k 소파일 I/O가 수십 배 느리다.
+> - **`WORK/outputs` → `DRIVE/outputs` 심볼릭 링크**. 스크립트는 `PCB_ROOT/outputs`만 알면 되고,
+>   산출물(JSON/npy/PNG, 합쳐서 수십 MB)은 세션이 죽어도 Drive에 남는다.
+> - **세션 재시작 복원**: `unzip -n` → `build_datasets.py` 재실행. split 결정이 결정적이라
+>   (정렬 + board별 box 수 greedy, RNG 없음) 동일 구성이 재현된다.
+> - 리포에 동봉된 `outputs/phase3/labels_manual.json`은 step3에서 `outputs/phase3/`(=Drive)로
 >   **1회 복사**한다. 기존 파일이 있으면 덮지 않는다.
+> - `datasets/*cp` 8종은 step4 재실행(수십 분)보다 **Drive tar 백업**이 싸다(§6).
 
 ---
 
@@ -234,3 +284,22 @@ metrics = model.val(split='test', data=f"{D(ds)}/data.yaml")
 - **`mh_board` test는 보드 2장**이다. 절대값 단독 해석 금지, Δ와 시드 분산을 함께 본다.
 - 수동 라벨은 n=120·단일 라벨러다. 논문에 한계로 명시한다.
 - 테스트 코드 신규 작성·pytest 금지. 검증은 각 문서의 Colab 셀 실행으로 한다.
+
+---
+
+## 6. 세션 수명 / 백업·복원 (Colab 정본)
+
+| 대상 | 위치 | 세션 끊기면 | 복원 방법 | 비용 |
+|---|---|---|---|---|
+| 코드 | `REPO` | 사라짐 | `git clone` (0-A) | 수 초 |
+| 원본 데이터 | `WORK/pcb-defect-dataset` | 사라짐 | `unzip -n $PCB_ZIP -d $WORK` (0-C) | 2~4분 |
+| `datasets/` | `WORK/datasets` | 사라짐 | `build_datasets.py` 재실행 (0-D) — 결정적 | 1~2분 |
+| `datasets/*cp` 8종 | `WORK/datasets` | 사라짐 | Drive `backup/datasets.tar` 해제 (exp_yolo 0-E) | ~3분 |
+| `outputs/` | `DRIVE/outputs` (심볼릭) | **남음** | 불필요 | — |
+| `runs/` | `WORK/runs` | 사라짐 | 학습 재실행 — **끝나면 Drive로 복사할 것** | 재학습 |
+
+- **step4 → exp_yolo를 다른 세션에서 돌릴 계획이면 step4 말미의 `datasets.tar` 백업을 반드시 실행**한다.
+  없으면 `phase4_copypaste.py` 전체 재실행(수십 분)이다.
+- `runs/`는 Drive에 직접 쓰지 않는다. YOLO가 에폭마다 소파일을 쓰므로 FUSE에서 느리고 끊기기 쉽다.
+  학습 종료 후 `runs/{ds}_s{seed}/weights/best.pt`와 `results.csv`만 Drive로 복사한다.
+- `unzip -n`, `if not os.path.isdir(...)` 가드로 **전 복원 셀은 멱등**이다. 반복 실행해도 안전하다.
