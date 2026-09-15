@@ -41,7 +41,7 @@ import os, json, glob
 
 # ===== 공통 환경 (pcb-mh 전 문서 동일 — 수정 금지) =====
 os.environ['REPO']     = '/content/pcb_defect'                          # 코드(형상) — git clone, 세션 로컬
-os.environ['DRIVE']    = '/content/drive/MyDrive/pcb_defect'            # 영구 보관(outputs·백업)
+os.environ['DRIVE']    = '/content/drive/MyDrive/data/pcb_defect'       # 영구 보관(outputs·백업)
 os.environ['PCB_ZIP']  = '/content/drive/MyDrive/data/PCB/archive.zip'  # 원본 데이터 zip (Drive)
 os.environ['WORK']     = '/content/pcb_work'                            # 작업 루트 — 세션 로컬 디스크
 os.environ['PCB_ROOT'] = os.environ['WORK']                             # src/*.py가 읽는 유일한 데이터 루트
