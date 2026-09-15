@@ -1,0 +1,15 @@
+# ===== 데이터 (Drive에만 둔다 — 리포에 넣지 않는다) =====
+archive*.zip
+pcb-defect-dataset/
+pcb-defect-dataset-fixed/
+datasets/
+runs/
+
+# ===== 대용량/재생성 가능 산출물 =====
+outputs/phase1/crops_train_32.npy
+outputs/**/*.png
+
+# ===== 파이썬 =====
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/

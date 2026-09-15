@@ -1,0 +1,98 @@
+[
+  {
+    "base": "mh_board",
+    "method": "random",
+    "n_insert": 2,
+    "seed": 0,
+    "paste_mode": "core",
+    "train_images": 1212,
+    "boxes_added": 2176,
+    "mean_size_added": 31.957261029411764,
+    "lambda_spec": 1.5,
+    "topk_pool": 20
+  },
+  {
+    "base": "mh_board",
+    "method": "brightness",
+    "n_insert": 2,
+    "seed": 0,
+    "paste_mode": "core",
+    "train_images": 1212,
+    "boxes_added": 1884,
+    "mean_size_added": 34.91348195329087,
+    "lambda_spec": 1.5,
+    "topk_pool": 20
+  },
+  {
+    "base": "mh_board",
+    "method": "context",
+    "n_insert": 2,
+    "seed": 0,
+    "paste_mode": "core",
+    "train_images": 1212,
+    "boxes_added": 2215,
+    "mean_size_added": 32.77291196388262,
+    "lambda_spec": 1.5,
+    "topk_pool": 20
+  },
+  {
+    "base": "mh_board",
+    "method": "brightspec",
+    "n_insert": 2,
+    "seed": 0,
+    "paste_mode": "core",
+    "train_images": 1212,
+    "boxes_added": 1997,
+    "mean_size_added": 35.259389083625436,
+    "lambda_spec": 1.5,
+    "topk_pool": 20
+  },
+  {
+    "base": "mh_orig",
+    "method": "random",
+    "n_insert": 2,
+    "seed": 0,
+    "paste_mode": "core",
+    "train_images": 1477,
+    "boxes_added": 2682,
+    "mean_size_added": 31.738255033557046,
+    "lambda_spec": 1.5,
+    "topk_pool": 20
+  },
+  {
+    "base": "mh_orig",
+    "method": "brightness",
+    "n_insert": 2,
+    "seed": 0,
+    "paste_mode": "core",
+    "train_images": 1477,
+    "boxes_added": 2275,
+    "mean_size_added": 34.932307692307695,
+    "lambda_spec": 1.5,
+    "topk_pool": 20
+  },
+  {
+    "base": "mh_orig",
+    "method": "context",
+    "n_insert": 2,
+    "seed": 0,
+    "paste_mode": "core",
+    "train_images": 1477,
+    "boxes_added": 2691,
+    "mean_size_added": 32.8561872909699,
+    "lambda_spec": 1.5,
+    "topk_pool": 20
+  },
+  {
+    "base": "mh_orig",
+    "method": "brightspec",
+    "n_insert": 2,
+    "seed": 0,
+    "paste_mode": "core",
+    "train_images": 1477,
+    "boxes_added": 2417,
+    "mean_size_added": 35.468762929251135,
+    "lambda_spec": 1.5,
+    "topk_pool": 20
+  }
+]
